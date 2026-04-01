@@ -12,11 +12,17 @@ from pathlib import Path
 from subprocess import PIPE
 
 import sys
+import os
 
 from decky import logger, DECKY_PLUGIN_DIR, emit  # type: ignore
 from logging import INFO
 
+# defaults/ contents are moved to plugin root by Decky CI,
+# but stay nested for manual installs. Add both paths.
 sys.path.append(DECKY_PLUGIN_DIR)
+defaults_dir = os.path.join(DECKY_PLUGIN_DIR, "defaults")
+if os.path.isdir(defaults_dir):
+    sys.path.append(defaults_dir)
 
 from tab_utils.tab import (
     find_discord_tab,
