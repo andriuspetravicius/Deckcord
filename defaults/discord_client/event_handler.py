@@ -1,8 +1,12 @@
 from json import dumps, loads
-from asyncio import sleep, get_event_loop, Task, Event, Queue
+from asyncio import sleep, get_event_loop, Task, Event, Queue, create_subprocess_exec
 from aiohttp import WSMsgType # type: ignore
 from aiohttp.web import WebSocketResponse # type: ignore
 from traceback import print_exception
+import base64
+import mimetypes
+import os
+from subprocess import PIPE as SUBPROCESS_PIPE
 
 from .store_access import StoreAccess, User
 from decky import logger # type: ignore
@@ -26,6 +30,7 @@ class EventHandler:
             "STREAM_STOP": self.toggle_mute,
             "STREAM_START": self.toggle_mute,
             "$MIC_WEBRTC": self._webrtc_mic_forward,
+            "$file_picker": self._file_picker,
         }
 
         self.loaded = False
@@ -170,3 +175,80 @@ class EventHandler:
 
     async def _webrtc_mic_forward(self, data):
         self.webrtc = data
+
+    async def _file_picker(self, data) -> None:
+        """Open a native file picker on the Steam Deck via kdialog.
+
+        Sends the selected file(s) back to the Discord client as base64
+        so they can be injected into Discord's upload via DataTransfer.
+        """
+        logger.info("Opening native file picker via kdialog")
+        try:
+            # kdialog is available on Steam Deck (KDE Plasma)
+            # Set display env so it renders in Game Mode (Gamescope)
+            env = {
+                **os.environ,
+                "DISPLAY": os.environ.get("DISPLAY", ":0"),
+                "DBUS_SESSION_BUS_ADDRESS": os.environ.get(
+                    "DBUS_SESSION_BUS_ADDRESS",
+                    "unix:path=/run/user/1000/bus"
+                ),
+                "XDG_RUNTIME_DIR": os.environ.get(
+                    "XDG_RUNTIME_DIR", "/run/user/1000"
+                ),
+            }
+
+            # Build the kdialog command
+            cmd = [
+                "kdialog",
+                "--getopenfilename",
+                os.path.expanduser("~"),
+                "*",
+                "--title", "Upload a File",
+            ]
+
+            proc = await create_subprocess_exec(
+                *cmd, env=env, stdout=SUBPROCESS_PIPE, stderr=SUBPROCESS_PIPE
+            )
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode != 0 or not stdout.strip():
+                # User cancelled or kdialog failed
+                logger.info("File picker cancelled or failed")
+                await self.ws.send_json({
+                    "type": "$file_picker_result",
+                    "files": []
+                })
+                return
+
+            filepath = stdout.decode("utf-8").strip()
+            if not os.path.isfile(filepath):
+                logger.error(f"Selected path is not a file: {filepath}")
+                await self.ws.send_json({
+                    "type": "$file_picker_result",
+                    "files": []
+                })
+                return
+
+            filename = os.path.basename(filepath)
+            mime_type = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
+
+            with open(filepath, "rb") as f:
+                file_data = base64.b64encode(f.read()).decode("ascii")
+
+            logger.info(f"Sending file: {filename} ({mime_type}, {len(file_data)} bytes b64)")
+            await self.ws.send_json({
+                "type": "$file_picker_result",
+                "files": [{
+                    "name": filename,
+                    "type": mime_type,
+                    "data": file_data
+                }]
+            })
+
+        except Exception as e:
+            logger.error(f"File picker error: {e}")
+            await self.ws.send_json({
+                "type": "$file_picker_result",
+                "files": []
+            })

@@ -68,15 +68,22 @@ window.Vencord.Plugins.plugins.Deckcord = {
         }
 
         // --- Keyboard management: only open on explicit user tap ---
+        // The BrowserView's native virtual keyboard auto-opens whenever
+        // an editable element receives focus. Discord auto-focuses the
+        // message textbox on every channel/server switch. We MUST blur
+        // the element immediately on programmatic focus to prevent
+        // the keyboard from appearing. Only allow focus (and thus the
+        // native keyboard) when the user physically tapped the screen.
         let _userTapped = false;
 
         // Mark that the user physically touched/clicked the screen
         document.addEventListener("pointerdown", () => { _userTapped = true; }, true);
         document.addEventListener("touchstart", () => { _userTapped = true; }, true);
 
-        // Reset the flag after a short delay (after focus events fire)
-        document.addEventListener("pointerup", () => { setTimeout(() => { _userTapped = false; }, 100); }, true);
-        document.addEventListener("touchend", () => { setTimeout(() => { _userTapped = false; }, 100); }, true);
+        // Reset the flag after a generous delay to cover the full
+        // pointerdown -> focus -> keyboard-show event chain
+        document.addEventListener("pointerup", () => { setTimeout(() => { _userTapped = false; }, 500); }, true);
+        document.addEventListener("touchend", () => { setTimeout(() => { _userTapped = false; }, 500); }, true);
 
         function attachKeyboardHandler(el) {
             if (el._deckcordPatched) return;
@@ -84,7 +91,13 @@ window.Vencord.Plugins.plugins.Deckcord = {
 
             el.addEventListener("focus", (e) => {
                 if (_userTapped) {
+                    // User explicitly tapped — let the native keyboard show
+                    // and also trigger our explicit opener as backup
                     fetch("http://127.0.0.1:65123/openkb", { mode: "no-cors" });
+                } else {
+                    // Programmatic focus (channel switch, etc.) — immediately
+                    // blur to prevent the native virtual keyboard from opening
+                    e.target.blur();
                 }
             }, true);
         }
@@ -104,6 +117,8 @@ window.Vencord.Plugins.plugins.Deckcord = {
         // Watch for new textboxes appearing (channel switches, DM opens, etc.)
         const _textboxObserver = new MutationObserver(() => {
             document.querySelectorAll("[role=\"textbox\"]").forEach(el => attachKeyboardHandler(el));
+            // Also patch any input elements (search boxes, etc.)
+            document.querySelectorAll("input[type=\"text\"], input[type=\"search\"], input:not([type])").forEach(el => attachKeyboardHandler(el));
         });
         // Start observing once the DOM is ready
         const _startObserver = setInterval(() => {
@@ -129,22 +144,41 @@ window.Vencord.Plugins.plugins.Deckcord = {
             style.textContent = `
                 /* Narrow the guild sidebar (server icon strip) */
                 nav[aria-label="Servers sidebar"],
-                div[class*="guilds"] {
+                div[class*="guilds_"] {
                     width: 56px !important;
                     min-width: 56px !important;
                 }
 
-                /* Narrow the channel sidebar by ~20% (default is ~240px → ~192px) */
-                div[class*="sidebar"] nav,
-                div[class*="sidebar_"][class*="container_"] {
-                    width: 192px !important;
-                    min-width: 192px !important;
-                    max-width: 192px !important;
+                /* Narrow the channel sidebar (~20% less than default 240px) */
+                div[class*="sidebar_"] {
+                    width: 190px !important;
+                    min-width: 190px !important;
+                    max-width: 190px !important;
                 }
 
-                /* Let the chat area fill remaining space */
-                div[class*="chat_"],
+                /* Force the entire app base layout to give chat maximum space */
+                div[class*="base_"] {
+                    display: flex !important;
+                    flex: 1 1 0% !important;
+                    min-width: 0 !important;
+                    overflow: hidden !important;
+                }
+
+                /* Chat container — fill ALL remaining horizontal space */
+                div[class*="chat_"] {
+                    flex: 1 1 0% !important;
+                    min-width: 0 !important;
+                    max-width: none !important;
+                    width: 0 !important;
+                }
                 div[class*="chatContent_"] {
+                    flex: 1 1 0% !important;
+                    min-width: 0 !important;
+                    max-width: none !important;
+                }
+
+                /* Ensure the content wrapper also stretches */
+                div[class*="content_"][class*="container_"] {
                     flex: 1 1 0% !important;
                     min-width: 0 !important;
                 }
@@ -161,16 +195,39 @@ window.Vencord.Plugins.plugins.Deckcord = {
         }
         injectDeckcordCSS();
 
-        // --- File upload: try to make native file dialog work ---
-        // The BrowserView may block <input type="file"> dialogs.
-        // Patch: ensure file inputs have click events propagated properly.
+        // --- File upload: intercept and use backend native file picker ---
+        // BrowserView does NOT support native <input type="file"> dialogs.
+        // We intercept file input clicks, ask the backend to show a
+        // native file picker (kdialog), and inject the selected file
+        // back into Discord's upload mechanism via DataTransfer.
+        window._pendingFileInput = null;
+
         function patchFileUpload() {
             const observer = new MutationObserver(() => {
                 document.querySelectorAll('input[type="file"]').forEach(input => {
                     if (input._deckcordFilePatched) return;
                     input._deckcordFilePatched = true;
-                    // Ensure the input is not hidden in a way that blocks interaction
-                    input.style.pointerEvents = 'auto';
+
+                    input.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.stopImmediatePropagation();
+
+                        // Store reference so we can inject the file later
+                        window._pendingFileInput = input;
+
+                        // Ask backend to open native file picker
+                        if (window.DECKCORD_WS && window.DECKCORD_WS.readyState === WebSocket.OPEN) {
+                            window.DECKCORD_WS.send(JSON.stringify({
+                                type: "$file_picker",
+                                accept: input.accept || "*/*",
+                                multiple: input.multiple || false
+                            }));
+                            console.log("Deckcord: Requested native file picker from backend");
+                        } else {
+                            console.warn("Deckcord: WebSocket not connected, cannot open file picker");
+                        }
+                    }, true);
                 });
             });
             const startObs = setInterval(() => {
@@ -309,6 +366,29 @@ window.Vencord.Plugins.plugins.Deckcord = {
                                     }
                                     return;
                                 case "$webrtc":
+                                    return;
+                                case "$file_picker_result":
+                                    // Backend sent back the selected file(s) from native picker
+                                    if (window._pendingFileInput && data.files && data.files.length > 0) {
+                                        try {
+                                            const dt = new DataTransfer();
+                                            for (const f of data.files) {
+                                                const bstr = atob(f.data);
+                                                const u8 = new Uint8Array(bstr.length);
+                                                for (let i = 0; i < bstr.length; i++) u8[i] = bstr.charCodeAt(i);
+                                                dt.items.add(new File([u8], f.name, { type: f.type || 'application/octet-stream' }));
+                                            }
+                                            window._pendingFileInput.files = dt.files;
+                                            window._pendingFileInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                            console.log("Deckcord: Injected " + data.files.length + " file(s) into upload input");
+                                        } catch(err) {
+                                            console.error("Deckcord: Failed to inject files:", err);
+                                        }
+                                        window._pendingFileInput = null;
+                                    } else {
+                                        // User cancelled or no files
+                                        window._pendingFileInput = null;
+                                    }
                                     return
                             }
                         } catch (error) {
