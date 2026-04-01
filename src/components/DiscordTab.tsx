@@ -25,6 +25,6 @@ export const DiscordTab = () => {
             window.DISCORD_TAB.m_browserView.SetVisible(false);
             window.DISCORD_TAB.m_browserView.SetFocus(false);
         }
-    })
+    }, [])
     return <div></div>
 }

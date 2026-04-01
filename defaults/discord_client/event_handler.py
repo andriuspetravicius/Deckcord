@@ -1,12 +1,12 @@
 from json import dumps, loads
-from asyncio import sleep, get_event_loop, Task, Event, Queue, create_subprocess_exec
+from asyncio import sleep, get_event_loop, Task, Event, Queue
 from aiohttp import WSMsgType # type: ignore
 from aiohttp.web import WebSocketResponse # type: ignore
 from traceback import print_exception
 import base64
 import mimetypes
 import os
-from subprocess import PIPE as SUBPROCESS_PIPE
+
 
 from .store_access import StoreAccess, User
 from decky import logger # type: ignore
@@ -31,6 +31,7 @@ class EventHandler:
             "STREAM_START": self.toggle_mute,
             "$MIC_WEBRTC": self._webrtc_mic_forward,
             "$file_picker": self._file_picker,
+            "$file_picker_select": self._file_picker_select,
         }
 
         self.loaded = False
@@ -149,8 +150,9 @@ class EventHandler:
         self.vc_channel_name = (await self.api.get_channel(self.vc_channel_id))["name"]
         if "guildId" in data and data["guildId"]:
             self.vc_guild_name = (await self.api.get_guild(data["guildId"]))["name"]
-        for user in self.voicestates[self.vc_channel_id].values():
-            await user.populate(self.api)
+        if self.vc_channel_id in self.voicestates:
+            for user in self.voicestates[self.vc_channel_id].values():
+                await user.populate(self.api)
     
     async def _voice_state_update(self, data):
         states = data["voiceStates"]
@@ -177,59 +179,134 @@ class EventHandler:
         self.webrtc = data
 
     async def _file_picker(self, data) -> None:
-        """Open a native file picker on the Steam Deck via kdialog.
+        """List files in a directory for the in-BrowserView file picker.
 
-        Sends the selected file(s) back to the Discord client as base64
-        so they can be injected into Discord's upload via DataTransfer.
+        If no path is given, returns quick-access directories
+        (Screenshots, Pictures, Downloads, Home).
         """
-        logger.info("Opening native file picker via kdialog")
+        path: str = data.get("path", "")
+        home: str = os.path.expanduser("~")
+
+        # Security: validate path is within allowed directories
+        allowed_bases: list[str] = [
+            home,
+            os.path.join(home, ".local/share/Steam/userdata"),
+        ]
+
+        def _is_path_allowed(p: str) -> bool:
+            if not p:
+                return True
+            real = os.path.realpath(p)
+            return any(real.startswith(os.path.realpath(base)) for base in allowed_bases)
+
+        if path and not _is_path_allowed(path):
+            logger.warning(f"File picker: blocked access to {path}")
+            await self.ws.send_json({
+                "type": "$file_picker_list",
+                "entries": [],
+                "path": path,
+                "parent": "",
+                "error": "Access denied"
+            })
+            return
+
+        if not path:
+            entries: list[dict] = []
+
+            # Find Steam screenshots directory
+            steam_userdata = os.path.join(home, ".local/share/Steam/userdata")
+            if os.path.isdir(steam_userdata):
+                for uid in os.listdir(steam_userdata):
+                    sp = os.path.join(steam_userdata, uid, "760", "remote")
+                    if os.path.isdir(sp):
+                        entries.append({"name": "\U0001f4f8 Screenshots", "path": sp, "type": "directory"})
+                        break
+
+            pictures = os.path.join(home, "Pictures")
+            if os.path.isdir(pictures):
+                entries.append({"name": "\U0001f5bc\ufe0f Pictures", "path": pictures, "type": "directory"})
+
+            downloads = os.path.join(home, "Downloads")
+            if os.path.isdir(downloads):
+                entries.append({"name": "\U0001f4e5 Downloads", "path": downloads, "type": "directory"})
+
+            entries.append({"name": "\U0001f3e0 Home", "path": home, "type": "directory"})
+
+            await self.ws.send_json({
+                "type": "$file_picker_list",
+                "entries": entries,
+                "path": "",
+                "parent": "",
+                "is_root": True
+            })
+            return
+
+        if not os.path.isdir(path):
+            await self.ws.send_json({
+                "type": "$file_picker_list",
+                "entries": [],
+                "path": path,
+                "parent": os.path.dirname(path),
+                "error": "Not a directory"
+            })
+            return
+
+        entries = []
         try:
-            # kdialog is available on Steam Deck (KDE Plasma)
-            # Set display env so it renders in Game Mode (Gamescope)
-            env = {
-                **os.environ,
-                "DISPLAY": os.environ.get("DISPLAY", ":0"),
-                "DBUS_SESSION_BUS_ADDRESS": os.environ.get(
-                    "DBUS_SESSION_BUS_ADDRESS",
-                    "unix:path=/run/user/1000/bus"
-                ),
-                "XDG_RUNTIME_DIR": os.environ.get(
-                    "XDG_RUNTIME_DIR", "/run/user/1000"
-                ),
-            }
+            for name in sorted(os.listdir(path)):
+                if name.startswith('.'):
+                    continue
+                full_path = os.path.join(path, name)
+                entry: dict = {"name": name, "path": full_path}
+                if os.path.isdir(full_path):
+                    entry["type"] = "directory"
+                else:
+                    entry["type"] = "file"
+                    try:
+                        entry["size"] = os.path.getsize(full_path)
+                    except OSError:
+                        entry["size"] = 0
+                    mime = mimetypes.guess_type(name)[0] or ""
+                    entry["mime"] = mime
+                entries.append(entry)
+        except PermissionError:
+            pass
 
-            # Build the kdialog command
-            cmd = [
-                "kdialog",
-                "--getopenfilename",
-                os.path.expanduser("~"),
-                "*",
-                "--title", "Upload a File",
-            ]
+        entries.sort(key=lambda e: (0 if e["type"] == "directory" else 1, e["name"].lower()))
 
-            proc = await create_subprocess_exec(
-                *cmd, env=env, stdout=SUBPROCESS_PIPE, stderr=SUBPROCESS_PIPE
-            )
-            stdout, stderr = await proc.communicate()
+        await self.ws.send_json({
+            "type": "$file_picker_list",
+            "entries": entries,
+            "path": path,
+            "parent": os.path.dirname(path),
+            "is_root": False
+        })
 
-            if proc.returncode != 0 or not stdout.strip():
-                # User cancelled or kdialog failed
-                logger.info("File picker cancelled or failed")
-                await self.ws.send_json({
-                    "type": "$file_picker_result",
-                    "files": []
-                })
-                return
+    async def _file_picker_select(self, data) -> None:
+        """Read a selected file and return as base64."""
+        filepath: str = data.get("path", "")
+        if not filepath or not os.path.isfile(filepath):
+            logger.error(f"File not found: {filepath}")
+            await self.ws.send_json({"type": "$file_picker_result", "files": []})
+            return
 
-            filepath = stdout.decode("utf-8").strip()
-            if not os.path.isfile(filepath):
-                logger.error(f"Selected path is not a file: {filepath}")
-                await self.ws.send_json({
-                    "type": "$file_picker_result",
-                    "files": []
-                })
-                return
+        # Security: validate path is within home directory
+        home: str = os.path.expanduser("~")
+        real_path = os.path.realpath(filepath)
+        if not real_path.startswith(os.path.realpath(home)):
+            logger.warning(f"File picker select: blocked access to {filepath}")
+            await self.ws.send_json({"type": "$file_picker_result", "files": []})
+            return
 
+        # Safety: reject files larger than 50MB to prevent OOM
+        max_size: int = 50 * 1024 * 1024
+        file_size = os.path.getsize(filepath)
+        if file_size > max_size:
+            logger.warning(f"File too large: {filepath} ({file_size} bytes)")
+            await self.ws.send_json({"type": "$file_picker_result", "files": []})
+            return
+
+        try:
             filename = os.path.basename(filepath)
             mime_type = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
 
@@ -245,10 +322,6 @@ class EventHandler:
                     "data": file_data
                 }]
             })
-
         except Exception as e:
-            logger.error(f"File picker error: {e}")
-            await self.ws.send_json({
-                "type": "$file_picker_result",
-                "files": []
-            })
+            logger.error(f"File picker select error: {e}")
+            await self.ws.send_json({"type": "$file_picker_result", "files": []})

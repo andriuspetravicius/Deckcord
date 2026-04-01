@@ -12,7 +12,7 @@ class User:
         self.is_live = False
 
     @classmethod
-    def from_vc(self, data):
+    def from_vc(cls, data):
         usr = User({"id": data["userId"], "username": "", "discriminator": None, "avatar": ""})
         usr.is_muted = data["mute"]
         usr.is_deafened = data["deaf"]
@@ -63,7 +63,9 @@ class StoreAccess:
         self.requests[self.request_increment] = response
         await self.ws.send_json({"type": command, "id": id, "increment": self.request_increment, **kwargs})
         await response.lock.wait()
-        return response.result
+        result = response.result
+        del self.requests[self.request_increment]
+        return result
 
     async def get_user(self, id):
         return await self._store_access_request("$getuser", id)
