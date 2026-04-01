@@ -199,8 +199,17 @@ window.Vencord.Plugins.plugins.Deckcord = {
                                     const vc_channel_id = Vencord.Webpack.findStore("SelectedChannelStore").getVoiceChannelId();
                                     if (!vc_channel_id) return;
                                     const vc_guild_id = Vencord.Webpack.Common.ChannelStore.getChannel(vc_channel_id).guild_id;
-                                    if (data.stop) Vencord.Webpack.wreq(799808).default(null, null, null);
-                                    else Vencord.Webpack.wreq(799808).default(vc_guild_id, vc_channel_id, "Activity Panel");
+                                    try {
+                                        const streamMod = Vencord.Webpack.findByProps("startStream", "stopStream");
+                                        if (streamMod) {
+                                            if (data.stop) streamMod.stopStream(null, null, null);
+                                            else streamMod.startStream(vc_guild_id, vc_channel_id, "Activity Panel");
+                                        } else {
+                                            console.warn("Deckcord: Could not find stream module via findByProps");
+                                        }
+                                    } catch(e) {
+                                        console.error("Deckcord: Go Live error:", e);
+                                    }
                                     return;
                                 case "$webrtc":
                                     return

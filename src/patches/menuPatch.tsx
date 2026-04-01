@@ -1,6 +1,6 @@
 //Credit: https://github.com/jessebofill/DeckWebBrowser
 
-import { afterPatch, Dropdown, findInReactTree, FooterLegendProps, getReactRoot } from "@decky/ui"
+import { afterPatch, findInReactTree, getReactRoot } from "@decky/ui"
 import { FC, ReactElement, ReactNode } from "react"
 import { FaDiscord } from "react-icons/fa"
 
@@ -12,7 +12,7 @@ interface MainMenuItemPropsBase {
     onActivate?: () => void
 }
 
-type MainMenuItemProps = MainMenuItemPropsBase & FooterLegendProps;
+type MainMenuItemProps = MainMenuItemPropsBase & Record<string, any>;
 
 const getReactTree = () => getReactRoot(document.getElementById('root') as any)
 
@@ -73,7 +73,9 @@ export const patchMenu = () => {
 
     return () => {
         menuNode.return.type = orig
-        menuNode.return.alternate.type = menuNode.return.type;
+        if (menuNode.return.alternate) {
+            menuNode.return.alternate.type = menuNode.return.type;
+        }
     }
 }
 
@@ -81,40 +83,19 @@ function getMenuItemIndexes(items: any[]) {
     return items.flatMap((item, index) => (item && item.$$typeof && item.type !== 'div') ? index : [])
 }
 
-interface MenuItemWrapperProps extends MainMenuItemProps {
+interface MenuItemWrapperProps extends MainMenuItemPropsBase {
     MenuItemComponent: FC<MainMenuItemProps>;
     useIconAsProp: boolean;
 }
 
-const MenuItemWrapper: FC<MenuItemWrapperProps> = ({ MenuItemComponent, label, useIconAsProp, ...props }) => {
-
-    const choosePosition: any = new (Dropdown as any)({
-        rgOptions: [
-            { label: '1', data: 1 },
-            { label: '2', data: 2 },
-            { label: '3', data: 3 },
-            { label: '4', data: 4 },
-            { label: '5', data: 5 },
-            { label: '6', data: 6 },
-            { label: '7', data: 7 },
-            { label: '8', data: 8 },
-            { label: '9', data: 9 },
-        ],
-        selectedOption: 1,
-        onChange: (data: any) => {
-            localStorage.setItem("DECKCORD_MENU_POSITION", data.data);
-            patchMenu();
-        }
-    });
-
-    (props as any)[useIconAsProp ? 'icon' : 'children'] = <FaDiscord />;
+const MenuItemWrapper: FC<MenuItemWrapperProps> = ({ MenuItemComponent, useIconAsProp, ...props }) => {
+    const componentProps: any = { ...props };
+    componentProps[useIconAsProp ? 'icon' : 'children'] = <FaDiscord />;
 
     return (
         <MenuItemComponent
-            {...props}
+            {...componentProps}
             label={'Discord'}
-            onSecondaryActionDescription={"Change Position"}
-            onSecondaryButton={(_) => choosePosition.ShowMenu()}
         />
     )
 }

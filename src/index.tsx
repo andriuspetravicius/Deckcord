@@ -1,12 +1,17 @@
 import {
-  definePlugin,
   PanelSection,
   PanelSectionRow,
   staticClasses,
-  Router,
-  sleep,
   Focusable,
 } from "@decky/ui";
+import {
+  definePlugin,
+  call,
+  routerHook,
+  toaster,
+  addEventListener,
+  removeEventListener,
+} from "@decky/api";
 import { FaDiscord } from "react-icons/fa";
 
 import { patchMenu } from "./patches/menuPatch";
@@ -26,13 +31,6 @@ import {
   VoiceChatMembers,
 } from "./components/VoiceChatViews";
 import { UploadScreenshot } from "./components/UploadScreenshot";
-import {
-  call,
-  routerHook,
-  toaster,
-  addEventListener,
-  removeEventListener,
-} from "@decky/api";
 
 declare global {
   interface Window {
@@ -166,25 +164,27 @@ export default definePlugin(() => {
       await call("mic_webrtc_answer", answer);
     } else if (data.ice) {
       try {
-        while (peerConnection.remoteDescription == null) await sleep(10);
+        while (peerConnection.remoteDescription == null) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
         await peerConnection.addIceCandidate(data.ice);
       } catch (e) {
         console.error("Deckcord: Error adding received ice candidate", e);
       }
     }
   };
-  addEventListener("state", webrtcEventListener);
+  const stateListener = addEventListener("state", webrtcEventListener);
 
   let settingsChangeUnregister: any;
   const appLifetimeUnregister =
     SteamClient.GameSessions.RegisterForAppLifetimeNotifications(async () => {
-      await sleep(500);
+      await new Promise((resolve) => setTimeout(resolve, 500));
       setPlaying();
     }).unregister;
   const unpatchMenu = patchMenu();
 
   const setPlaying = () => {
-    const app = Router.MainRunningApp;
+    const app = (window as any).Router?.MainRunningApp;
     call("set_rpc", app !== undefined ? app?.display_name : null);
   };
 
@@ -217,16 +217,18 @@ export default definePlugin(() => {
   });
 
   return {
-    title: <div className={staticClasses.Title}>Deckcord</div>,
+    name: "Deckcord",
+    titleView: <div className={staticClasses.Title}>Deckcord</div>,
     content: <Content />,
     icon: <FaDiscord />,
     onDismount() {
       unpatchMenu();
-      removeEventListener("webrtc", webrtcEventListener);
+      removeEventListener("state", stateListener);
+      routerHook.removeRoute("/discord");
       try {
         appLifetimeUnregister();
         settingsChangeUnregister();
-      } catch (error) { }
+      } catch (_error) { }
     },
     alwaysRender: true,
   };

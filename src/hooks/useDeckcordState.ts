@@ -7,14 +7,12 @@ export function useDeckcordState() {
   useEffect(() => {
     call("get_state").then((s) => setState(s));
 
-    addEventListener("state", (data: any) => {
+    const listener = addEventListener("state", (data: any) => {
       setState(data);
     });
 
     return () => {
-      removeEventListener("state", (data: any) => {
-        setState(data);
-      });
+      removeEventListener("state", listener);
     };
   }, []);
 
@@ -27,13 +25,12 @@ export const isLoaded = () =>
       if (s.loaded) resolve(true);
     });
 
-    const listener = (s: any) => {
+    const listener = addEventListener("state", (s: any) => {
       if (s.loaded) {
         removeEventListener("state", listener);
         return resolve(true);
       }
-    };
-    addEventListener("state", listener);
+    });
   });
 
 export const isLoggedIn = () =>
@@ -42,11 +39,10 @@ export const isLoggedIn = () =>
       if (s.logged_in) resolve(true);
     });
 
-    const listener = (s: any) => {
+    const listener = addEventListener("state", (s: any) => {
       if (s.logged_in) {
         removeEventListener("state", listener);
         return resolve(true);
       }
-    };
-    addEventListener("state", listener);
+    });
   });
