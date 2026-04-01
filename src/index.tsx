@@ -3,6 +3,7 @@ import {
   PanelSectionRow,
   staticClasses,
   Focusable,
+  Router,
 } from "@decky/ui";
 import {
   definePlugin,
@@ -39,6 +40,71 @@ declare global {
       dispatchNotification: any;
       MIC_PEER_CONNECTION: any;
     };
+  }
+}
+
+/**
+ * Creates the Discord BrowserView using the Steam UI's Router.
+ * This MUST happen in the frontend context because Router.WindowStore
+ * is only available here (not in SharedJSContext via CDP).
+ */
+function createDiscordBrowserView(): boolean {
+  try {
+    // Clean up any existing tab
+    if (window.DISCORD_TAB) {
+      try {
+        window.DISCORD_TAB.m_browserView.SetVisible(false);
+        window.DISCORD_TAB.Destroy();
+      } catch (_e) { }
+      window.DISCORD_TAB = undefined;
+    }
+
+    const windowRouter = (Router as any).WindowStore?.GamepadUIMainWindowInstance;
+    if (!windowRouter) {
+      console.error("Deckcord: GamepadUIMainWindowInstance not found");
+      return false;
+    }
+
+    const tab = windowRouter.CreateBrowserView("discord");
+    tab.WIDTH = 860;
+    tab.HEIGHT = 495;
+    tab.m_browserView.SetBounds(0, 0, tab.WIDTH, tab.HEIGHT);
+    // Load a sentinel URL so the backend can find this tab via CDP
+    tab.m_browserView.LoadURL("data:text/plain,to_be_discord");
+
+    window.DISCORD_TAB = tab;
+
+    // Register virtual keyboard resize handler
+    try {
+      windowRouter.m_VirtualKeyboardManager?.IsShowingVirtualKeyboard?.m_callbacks?.m_vecCallbacks?.push(
+        (showing: boolean) => {
+          if (!window.DISCORD_TAB) return;
+          if (!showing) {
+            const bounds = window.DISCORD_TAB.m_browserView.GetBounds();
+            if (bounds.height !== window.DISCORD_TAB.HEIGHT) {
+              window.DISCORD_TAB.m_browserView.SetBounds(
+                0, 0, window.DISCORD_TAB.WIDTH, window.DISCORD_TAB.HEIGHT
+              );
+            }
+          } else {
+            const bounds = window.DISCORD_TAB.m_browserView.GetBounds();
+            if (bounds.height !== window.DISCORD_TAB.HEIGHT * 0.6) {
+              window.DISCORD_TAB.m_browserView.SetBounds(
+                0, 0, window.DISCORD_TAB.WIDTH, window.DISCORD_TAB.HEIGHT * 0.6
+              );
+            }
+          }
+        }
+      );
+    } catch (e) {
+      console.warn("Deckcord: Could not register virtual keyboard handler:", e);
+    }
+
+    console.log("Deckcord: BrowserView created successfully from frontend");
+    return true;
+  } catch (e) {
+    console.error("Deckcord: Failed to create BrowserView:", e);
+    return false;
   }
 }
 
@@ -134,6 +200,18 @@ export default definePlugin(() => {
     MIC_PEER_CONNECTION: undefined,
   };
 
+  // Create the BrowserView from the frontend where Router is available
+  const browserViewCreated = createDiscordBrowserView();
+  if (!browserViewCreated) {
+    console.error("Deckcord: FATAL — Could not create Discord BrowserView");
+  } else {
+    // Tell the backend the tab is ready to be found via CDP
+    // Small delay to let the sentinel URL load
+    setTimeout(() => {
+      call("initialize_discord_tab");
+    }, 1500);
+  }
+
   let peerConnection: RTCPeerConnection;
   const webrtcEventListener = async (data: any) => {
     if (!data.webrtc) return;
@@ -225,6 +303,14 @@ export default definePlugin(() => {
       unpatchMenu();
       removeEventListener("state", stateListener);
       routerHook.removeRoute("/discord");
+      // Clean up the browser view
+      if (window.DISCORD_TAB) {
+        try {
+          window.DISCORD_TAB.m_browserView.SetVisible(false);
+          window.DISCORD_TAB.Destroy();
+          window.DISCORD_TAB = undefined;
+        } catch (_e) { }
+      }
       try {
         appLifetimeUnregister();
         settingsChangeUnregister();

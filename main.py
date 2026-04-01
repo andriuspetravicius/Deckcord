@@ -19,7 +19,7 @@ from logging import INFO
 sys.path.append(DECKY_PLUGIN_DIR)
 
 from tab_utils.tab import (
-    create_discord_tab,
+    find_discord_tab,
     setup_discord_tab,
     boot_discord,
     setOSK,
@@ -42,7 +42,13 @@ async def stream_watcher(stream, is_err=False):
 
 
 async def initialize():
-    tab = await create_discord_tab()
+    """
+    Called by the frontend after it creates the BrowserView.
+    Finds the tab via CDP, injects Vencord + client scripts, navigates to Discord.
+    """
+    logger.info("Waiting for Discord browser view tab via CDP...")
+    tab = await find_discord_tab()
+    logger.info(f"Found Discord tab: {tab.id}")
     await setup_discord_tab(tab)
     await boot_discord(tab)
 
@@ -89,10 +95,10 @@ class Plugin:
 
     @classmethod
     async def _main(cls):
-        logger.info("Starting Deckcord backend")
-        await initialize()
-        logger.info("Discord initialized")
+        logger.info("Starting Deckcord backend — waiting for frontend to create browser view")
 
+        # Start the aiohttp server immediately so it's ready when the frontend
+        # calls initialize_discord_tab and when Discord client.js connects
         cls.server.add_routes(
             [
                 get("/openkb", cls._openkb),
@@ -131,8 +137,22 @@ class Plugin:
         create_task(stream_watcher(cls.webrtc_server.stdout))
         create_task(stream_watcher(cls.webrtc_server.stderr, True))
 
+        # Yield state updates to frontend
         async for state in cls.evt_handler.yield_new_state():
             await emit("state", state)
+
+    @classmethod
+    async def initialize_discord_tab(cls):
+        """
+        Called by the frontend after it creates the BrowserView using Router.
+        This finds the tab via CDP and sets up Vencord + Discord.
+        """
+        logger.info("Frontend requested Discord tab initialization")
+        try:
+            await initialize()
+            logger.info("Discord tab initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Discord tab: {e}")
 
     @classmethod
     async def _openkb(cls, request):
@@ -243,12 +263,4 @@ class Plugin:
             await cls.runner.cleanup()
 
         if hasattr(cls, "shared_js_tab"):
-            await cls.shared_js_tab.ensure_open()
-            await cls.shared_js_tab.evaluate(
-                """
-                window.DISCORD_TAB.m_browserView.SetVisible(false);
-                window.DISCORD_TAB.Destroy();
-                window.DISCORD_TAB = undefined;
-            """
-            )
             await cls.shared_js_tab.close_websocket()
