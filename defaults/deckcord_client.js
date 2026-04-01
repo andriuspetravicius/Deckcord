@@ -67,14 +67,51 @@ window.Vencord.Plugins.plugins.Deckcord = {
             return new File([u8arr], filename, { type: mime });
         }
 
+        // --- Keyboard management: only open on explicit user tap ---
+        let _userTapped = false;
+
+        // Mark that the user physically touched/clicked the screen
+        document.addEventListener("pointerdown", () => { _userTapped = true; }, true);
+        document.addEventListener("touchstart", () => { _userTapped = true; }, true);
+
+        // Reset the flag after a short delay (after focus events fire)
+        document.addEventListener("pointerup", () => { setTimeout(() => { _userTapped = false; }, 100); }, true);
+        document.addEventListener("touchend", () => { setTimeout(() => { _userTapped = false; }, 100); }, true);
+
+        function attachKeyboardHandler(el) {
+            if (el._deckcordPatched) return;
+            el._deckcordPatched = true;
+
+            el.addEventListener("focus", (e) => {
+                if (_userTapped) {
+                    fetch("http://127.0.0.1:65123/openkb", { mode: "no-cors" });
+                }
+            }, true);
+        }
+
         function patchTypingField() {
             const t = setInterval(() => {
                 try {
-                    document.querySelectorAll("[role=\"textbox\"]")[0].onclick = (e) => fetch("http://127.0.0.1:65123/openkb", { mode: "no-cors" });
-                    clearInterval(t);
+                    const textboxes = document.querySelectorAll("[role=\"textbox\"]");
+                    if (textboxes.length > 0) {
+                        textboxes.forEach(el => attachKeyboardHandler(el));
+                        clearInterval(t);
+                    }
                 } catch (err) { }
-            }, 100)
+            }, 100);
         }
+
+        // Watch for new textboxes appearing (channel switches, DM opens, etc.)
+        const _textboxObserver = new MutationObserver(() => {
+            document.querySelectorAll("[role=\"textbox\"]").forEach(el => attachKeyboardHandler(el));
+        });
+        // Start observing once the DOM is ready
+        const _startObserver = setInterval(() => {
+            if (document.body) {
+                _textboxObserver.observe(document.body, { childList: true, subtree: true });
+                clearInterval(_startObserver);
+            }
+        }, 200);
 
         async function getAppId(name) {
             const res = await Vencord.Webpack.Common.RestAPI.get({ url: "/applications/detectable" });
@@ -84,6 +121,66 @@ window.Vencord.Plugins.plugins.Deckcord = {
             }
             return "0";
         }
+
+        // --- Inject Deckcord CSS: narrower sidebar, wider chat ---
+        function injectDeckcordCSS() {
+            const style = document.createElement('style');
+            style.id = 'deckcord-custom-css';
+            style.textContent = `
+                /* Narrow the guild sidebar (server icon strip) */
+                nav[aria-label="Servers sidebar"],
+                div[class*="guilds"] {
+                    width: 56px !important;
+                    min-width: 56px !important;
+                }
+
+                /* Narrow the channel sidebar by ~20% (default is ~240px → ~192px) */
+                div[class*="sidebar"] nav,
+                div[class*="sidebar_"][class*="container_"] {
+                    width: 192px !important;
+                    min-width: 192px !important;
+                    max-width: 192px !important;
+                }
+
+                /* Let the chat area fill remaining space */
+                div[class*="chat_"],
+                div[class*="chatContent_"] {
+                    flex: 1 1 0% !important;
+                    min-width: 0 !important;
+                }
+            `;
+            const injectInterval = setInterval(() => {
+                if (document.head) {
+                    // Remove any existing to avoid duplicates on reconnect
+                    const existing = document.getElementById('deckcord-custom-css');
+                    if (existing) existing.remove();
+                    document.head.appendChild(style);
+                    clearInterval(injectInterval);
+                }
+            }, 200);
+        }
+        injectDeckcordCSS();
+
+        // --- File upload: try to make native file dialog work ---
+        // The BrowserView may block <input type="file"> dialogs.
+        // Patch: ensure file inputs have click events propagated properly.
+        function patchFileUpload() {
+            const observer = new MutationObserver(() => {
+                document.querySelectorAll('input[type="file"]').forEach(input => {
+                    if (input._deckcordFilePatched) return;
+                    input._deckcordFilePatched = true;
+                    // Ensure the input is not hidden in a way that blocks interaction
+                    input.style.pointerEvents = 'auto';
+                });
+            });
+            const startObs = setInterval(() => {
+                if (document.body) {
+                    observer.observe(document.body, { childList: true, subtree: true });
+                    clearInterval(startObs);
+                }
+            }, 200);
+        }
+        patchFileUpload();
 
         let CloudUpload;
         CloudUpload = Vencord.Webpack.findLazy(m => m.prototype?.trackUploadFinished);;
@@ -288,7 +385,7 @@ window.Vencord.Plugins.plugins.Deckcord = {
                 try {
                     if (window.location.pathname == "/login") {
                         for (const el of document.getElementsByTagName('input')) {
-                            el.onclick = (ev) => fetch("http://127.0.0.1:65123/openkb", { mode: "no-cors" });
+                            attachKeyboardHandler(el);
                         }
                     }
                     clearInterval(t);
