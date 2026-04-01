@@ -72,7 +72,8 @@ async def watchdog(tab: Tab):
             await tab.open_websocket()
             logger.info("Reconnected")
 
-        except:
+        except Exception as e:
+            logger.error(f"Failed to reconnect to Discord tab: {e}")
             break
 
     logger.info("Discord has died. Re-initializing...")
@@ -82,7 +83,8 @@ async def watchdog(tab: Tab):
             await initialize()
             break
 
-        except:
+        except Exception as e:
+            logger.error(f"Re-initialization attempt failed: {e}")
             await sleep(1)
 
 
@@ -117,7 +119,7 @@ class Plugin:
         cls.runner = AppRunner(cls.server, access_log=None)
         await cls.runner.setup()
         logger.info("Starting server.")
-        await TCPSite(cls.runner, "0.0.0.0", 65123).start()
+        await TCPSite(cls.runner, "127.0.0.1", 65123).start()
 
         cls.shared_js_tab = await get_tab("SharedJSContext")
         await cls.shared_js_tab.open_websocket()

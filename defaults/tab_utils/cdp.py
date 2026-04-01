@@ -10,9 +10,8 @@ from asyncio.exceptions import TimeoutError
 BASE_ADDRESS = "http://127.0.0.1:8080"
 
 class Tab:
-    cmd_id = 0
-
     def __init__(self, res) -> None:
+        self.cmd_id = 0
         self.title = res["title"]
         self.id = res["id"]
         self.url = res["url"]

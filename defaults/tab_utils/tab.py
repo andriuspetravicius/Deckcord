@@ -58,14 +58,8 @@ async def setup_discord_tab(tab: Tab) -> None:
             "params": {
                 "source": "Object.hasOwn = (obj, prop) => Object.prototype.hasOwnProperty.call(obj, prop);"
                 + await fetch_vencord()
-                + open(
-                    Path(__file__).parent.parent.joinpath("deckcord_client.js"),
-                    "r",
-                ).read()
-                + open(
-                    Path(__file__).parent.parent.joinpath("webrtc_client.js"),
-                    "r",
-                ).read(),
+                + Path(__file__).parent.parent.joinpath("deckcord_client.js").read_text()
+                + Path(__file__).parent.parent.joinpath("webrtc_client.js").read_text(),
                 "runImmediately": True,
             },
         }
