@@ -1,5 +1,6 @@
 from aiohttp.web import (  # type: ignore
     Application,
+    Response,
     get,
     WebSocketResponse,
     AppRunner,
@@ -167,7 +168,7 @@ class Plugin:
         await cls.shared_js_tab.ensure_open()
         await setOSK(cls.shared_js_tab, True)
         logger.info("Setting discord visibility to true")
-        return "OK"
+        return Response(text="OK")
 
     @classmethod
     async def _websocket_handler(cls, request):

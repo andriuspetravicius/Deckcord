@@ -2,16 +2,63 @@ import { call, toaster } from "@decky/api"
 import { Router } from "@decky/ui"
 import { useLayoutEffect } from "react"
 
+// Steam hides the Big Picture status bar (clock, battery, wifi) on custom
+// plugin routes by transforming it off-screen. Find that element by
+// structural signature — direct child of `.BasicUI.GamepadMode`, tiny
+// absolute-positioned bar near the top — and force transform:none while
+// Discord tab is mounted so the status bar overlays on top of Discord.
+const STATUS_BAR_STYLE_ID = "deckcord-statusbar-fix";
+
+function findStatusBarClass(doc: Document): string | null {
+    const basicUI = doc.querySelector(".BasicUI.GamepadMode") as HTMLElement | null;
+    if (!basicUI) return null;
+    for (const child of Array.from(basicUI.children) as HTMLElement[]) {
+        const cs = child.ownerDocument.defaultView?.getComputedStyle(child);
+        if (!cs) continue;
+        if (cs.position !== "absolute") continue;
+        const transform = cs.transform || "";
+        // Hidden status bar has a translate(y, negative) transform.
+        if (!/matrix\([^)]*,\s*-\d/.test(transform)) continue;
+        const rect = child.getBoundingClientRect();
+        if (rect.width < 100 || rect.width > 500) continue;
+        if (rect.height < 20 || rect.height > 60) continue;
+        // Use the first non-modifier class (base class, not the hidden modifier).
+        const cls = (child.getAttribute("class") || "").split(/\s+/)[0];
+        if (cls) return cls;
+    }
+    return null;
+}
+
+function installStatusBarFix(doc: Document) {
+    if (doc.getElementById(STATUS_BAR_STYLE_ID)) return;
+    const cls = findStatusBarClass(doc);
+    if (!cls) return;
+    const style = doc.createElement("style");
+    style.id = STATUS_BAR_STYLE_ID;
+    style.textContent = `.${cls}{transform:none!important}`;
+    doc.head.appendChild(style);
+}
+
+function removeStatusBarFix(doc: Document) {
+    doc.getElementById(STATUS_BAR_STYLE_ID)?.remove();
+}
+
 export const DiscordTab = () => {
     useLayoutEffect(() => {
+        // Status bar lives inside the Big Picture (GamepadUI) main window
+        // DOM, not SharedJSContext. Grab that document explicitly.
+        const mainWindow: any =
+            (Router as any).WindowStore?.GamepadUIMainWindowInstance?.m_BrowserWindow;
+        const doc: Document = mainWindow?.document ?? document;
+        installStatusBarFix(doc);
+
         call<[], any>("get_state").then(res => {
             const state = res;
             if (state?.loaded && window.DISCORD_TAB) {
                 const bv = window.DISCORD_TAB.m_browserView;
                 bv.SetVisible(true);
-                // Place Discord BrowserView below Steam UI so status bar,
-                // side menu and Quick Access overlay naturally render on top
-                // (with blur) instead of being hidden behind it.
+                // Place Discord BrowserView below Steam UI so status bar and
+                // side menus render on top.
                 try { bv.SetWindowStackingOrder?.(0); } catch (_e) { }
                 bv.SetFocus(true);
                 try { bv.NotifyUserActivation?.(); } catch (_e) { }
@@ -25,6 +72,7 @@ export const DiscordTab = () => {
             }
         })
         return () => {
+            removeStatusBarFix(doc);
             if (!window.DISCORD_TAB)
                 return;
 

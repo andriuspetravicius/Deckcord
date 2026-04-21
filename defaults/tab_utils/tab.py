@@ -80,19 +80,19 @@ async def boot_discord(tab: Tab) -> None:
 
 async def setOSK(tab: Tab, state: bool) -> None:
     if state:
-        # Blur any currently focused Steam UI input (e.g. library search),
-        # raise BrowserView to top of the stack, notify user activation and
-        # force focus onto it before showing the OSK so typed characters
-        # route to Discord instead of the Steam library search.
+        # Blur any currently focused Steam UI input (e.g. library search) so
+        # it stops being the VirtualKeyboardManager target, register the
+        # Discord BrowserView as the current target, then show the keyboard.
+        # Keep the BrowserView at Bottom stacking so the status bar and side
+        # menus still overlay on top.
         await tab.evaluate(
             "try { document.activeElement && document.activeElement.blur && document.activeElement.blur(); } catch(e) {}"
-            "try { DISCORD_TAB.m_browserView.SetWindowStackingOrder(1); } catch(e) {}"
             "try { DISCORD_TAB.m_browserView.NotifyUserActivation(); } catch(e) {}"
             "DISCORD_TAB.m_browserView.SetFocus(true);"
-            "DISCORD_TAB.m_virtualKeyboardHost.m_showKeyboard()"
+            "try { DISCORD_TAB.m_refKeyboard.SetAsCurrentVirtualKeyboardTarget(); } catch(e) {}"
+            "DISCORD_TAB.m_refKeyboard.ShowVirtualKeyboard();"
         )
     else:
         await tab.evaluate(
-            "DISCORD_TAB.m_virtualKeyboardHost.m_hideKeyboard();"
-            "try { DISCORD_TAB.m_browserView.SetWindowStackingOrder(0); } catch(e) {}"
+            "DISCORD_TAB.m_refKeyboard.HideVirtualKeyboard();"
         )
