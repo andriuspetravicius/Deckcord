@@ -80,13 +80,19 @@ async def boot_discord(tab: Tab) -> None:
 
 async def setOSK(tab: Tab, state: bool) -> None:
     if state:
-        # Force focus onto the BrowserView before showing the OSK so typed
-        # characters route to Discord instead of the Steam library search.
+        # Blur any currently focused Steam UI input (e.g. library search),
+        # raise BrowserView to top of the stack, notify user activation and
+        # force focus onto it before showing the OSK so typed characters
+        # route to Discord instead of the Steam library search.
         await tab.evaluate(
+            "try { document.activeElement && document.activeElement.blur && document.activeElement.blur(); } catch(e) {}"
+            "try { DISCORD_TAB.m_browserView.SetWindowStackingOrder(1); } catch(e) {}"
+            "try { DISCORD_TAB.m_browserView.NotifyUserActivation(); } catch(e) {}"
             "DISCORD_TAB.m_browserView.SetFocus(true);"
             "DISCORD_TAB.m_virtualKeyboardHost.m_showKeyboard()"
         )
     else:
         await tab.evaluate(
-            "DISCORD_TAB.m_virtualKeyboardHost.m_hideKeyboard()"
+            "DISCORD_TAB.m_virtualKeyboardHost.m_hideKeyboard();"
+            "try { DISCORD_TAB.m_browserView.SetWindowStackingOrder(0); } catch(e) {}"
         )
