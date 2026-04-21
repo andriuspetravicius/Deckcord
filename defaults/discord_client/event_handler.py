@@ -197,7 +197,14 @@ class EventHandler:
             if not p:
                 return True
             real = os.path.realpath(p)
-            return any(real.startswith(os.path.realpath(base)) for base in allowed_bases)
+            for base in allowed_bases:
+                base_real = os.path.realpath(base)
+                try:
+                    if os.path.commonpath([real, base_real]) == base_real:
+                        return True
+                except ValueError:
+                    continue
+            return False
 
         if path and not _is_path_allowed(path):
             logger.warning(f"File picker: blocked access to {path}")
@@ -290,10 +297,23 @@ class EventHandler:
             await self.ws.send_json({"type": "$file_picker_result", "files": []})
             return
 
-        # Security: validate path is within home directory
+        # Security: validate path is within allowed directories
         home: str = os.path.expanduser("~")
+        allowed_bases: list[str] = [
+            home,
+            os.path.join(home, ".local/share/Steam/userdata"),
+        ]
         real_path = os.path.realpath(filepath)
-        if not real_path.startswith(os.path.realpath(home)):
+        allowed = False
+        for base in allowed_bases:
+            base_real = os.path.realpath(base)
+            try:
+                if os.path.commonpath([real_path, base_real]) == base_real:
+                    allowed = True
+                    break
+            except ValueError:
+                continue
+        if not allowed:
             logger.warning(f"File picker select: blocked access to {filepath}")
             await self.ws.send_json({"type": "$file_picker_result", "files": []})
             return

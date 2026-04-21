@@ -21,28 +21,38 @@ export function useDeckcordState() {
 
 export const isLoaded = () =>
   new Promise((resolve) => {
-    call("get_state").then((s: any) => {
-      if (s.loaded) resolve(true);
-    });
-
+    let done = false;
     const listener = addEventListener("state", (s: any) => {
-      if (s.loaded) {
+      if (!done && s.loaded) {
+        done = true;
         removeEventListener("state", listener);
         return resolve(true);
+      }
+    });
+    call("get_state").then((s: any) => {
+      if (!done && s.loaded) {
+        done = true;
+        removeEventListener("state", listener);
+        resolve(true);
       }
     });
   });
 
 export const isLoggedIn = () =>
   new Promise((resolve) => {
-    call("get_state").then((s: any) => {
-      if (s.logged_in) resolve(true);
-    });
-
+    let done = false;
     const listener = addEventListener("state", (s: any) => {
-      if (s.logged_in) {
+      if (!done && s.logged_in) {
+        done = true;
         removeEventListener("state", listener);
         return resolve(true);
+      }
+    });
+    call("get_state").then((s: any) => {
+      if (!done && s.logged_in) {
+        done = true;
+        removeEventListener("state", listener);
+        resolve(true);
       }
     });
   });

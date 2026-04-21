@@ -40,6 +40,7 @@ declare global {
       dispatchNotification: any;
       MIC_PEER_CONNECTION: any;
     };
+    DECKCORD_VK_CALLBACK?: (showing: boolean) => void;
   }
 }
 
@@ -76,8 +77,14 @@ function createDiscordBrowserView(): boolean {
 
     // Register virtual keyboard resize handler
     try {
-      windowRouter.m_VirtualKeyboardManager?.IsShowingVirtualKeyboard?.m_callbacks?.m_vecCallbacks?.push(
-        (showing: boolean) => {
+      const callbacks =
+        windowRouter.m_VirtualKeyboardManager?.IsShowingVirtualKeyboard?.m_callbacks?.m_vecCallbacks;
+      if (Array.isArray(callbacks)) {
+        if (window.DECKCORD_VK_CALLBACK) {
+          const oldIdx = callbacks.indexOf(window.DECKCORD_VK_CALLBACK);
+          if (oldIdx >= 0) callbacks.splice(oldIdx, 1);
+        }
+        window.DECKCORD_VK_CALLBACK = (showing: boolean) => {
           if (!window.DISCORD_TAB) return;
           if (!showing) {
             const bounds = window.DISCORD_TAB.m_browserView.GetBounds();
@@ -94,8 +101,9 @@ function createDiscordBrowserView(): boolean {
               );
             }
           }
-        }
-      );
+        };
+        callbacks.push(window.DECKCORD_VK_CALLBACK);
+      }
     } catch (e) {
       console.warn("Deckcord: Could not register virtual keyboard handler:", e);
     }
@@ -195,7 +203,16 @@ export default definePlugin(() => {
   window.DECKCORD = {
     dispatchNotification: (payload: { title: string; body: string }) => {
       console.log("Dispatching Deckcord notification: ", payload);
-      toaster.toast(payload);
+      toaster.toast({
+        title: payload.title,
+        body: payload.body,
+        duration: 5000,
+        // Render as a Steam toast that overlays games/BrowserViews.
+        critical: true,
+        showToast: true,
+        playSound: true,
+        sound: 6,
+      });
     },
     MIC_PEER_CONNECTION: undefined,
   };
@@ -311,6 +328,15 @@ export default definePlugin(() => {
           window.DISCORD_TAB = undefined;
         } catch (_e) { }
       }
+      try {
+        const callbacks =
+          (Router as any).WindowStore?.GamepadUIMainWindowInstance?.m_VirtualKeyboardManager?.IsShowingVirtualKeyboard?.m_callbacks?.m_vecCallbacks;
+        if (Array.isArray(callbacks) && window.DECKCORD_VK_CALLBACK) {
+          const idx = callbacks.indexOf(window.DECKCORD_VK_CALLBACK);
+          if (idx >= 0) callbacks.splice(idx, 1);
+        }
+        window.DECKCORD_VK_CALLBACK = undefined;
+      } catch (_e) { }
       try {
         appLifetimeUnregister();
         settingsChangeUnregister();

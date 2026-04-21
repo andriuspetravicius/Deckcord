@@ -186,7 +186,7 @@ class Plugin:
             )
             await cls.shared_js_tab.ensure_open()
             await cls.shared_js_tab.evaluate(
-                f"window.DECKCORD.dispatchNotification(JSON.parse('{payload}'));"
+                f"window.DECKCORD.dispatchNotification({payload});"
             )
 
     @classmethod
@@ -241,7 +241,7 @@ class Plugin:
         payload = dumps({"title": "Deckcord", "body": "Error while posting screenshot"})
         await cls.shared_js_tab.ensure_open()
         await cls.shared_js_tab.evaluate(
-            f"window.DECKCORD.dispatchNotification(JSON.parse('{payload}'));"
+            f"window.DECKCORD.dispatchNotification({payload});"
         )
 
     @classmethod

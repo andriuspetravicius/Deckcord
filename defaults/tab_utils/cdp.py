@@ -21,7 +21,7 @@ class Tab:
         self.client = None
     
     async def ensure_open(self):
-        if self.websocket.closed:
+        if not self.websocket or self.websocket.closed:
             await self.open_websocket()
 
     async def open_websocket(self):

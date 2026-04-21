@@ -1,12 +1,22 @@
 import { call, toaster } from "@decky/api";
 import { Toggle } from "@decky/ui";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const PTT_BUTTON = 33;
 
 export function PushToTalkButton() {
   const [pttEnabled, setPtt] = useState<boolean>(false);
-  let unregisterPtt: any;
+  const unregisterPtt = useRef<undefined | (() => void)>(undefined);
+
+  useEffect(() => {
+    return () => {
+      if (unregisterPtt.current) {
+        unregisterPtt.current();
+        unregisterPtt.current = undefined;
+      }
+    };
+  }, []);
+
   return (
     <span style={{ display: "flex" }}>
       PTT:{" "}
@@ -14,13 +24,13 @@ export function PushToTalkButton() {
         value={pttEnabled}
         onChange={(checked) => {
           setPtt(checked);
-          if (!pttEnabled) {
+          if (checked) {
             call("enable_ptt", true);
             toaster.toast({
               title: "Push-To-Talk",
               body: "Hold down the R5 button to talk",
             });
-            unregisterPtt =
+            unregisterPtt.current =
               SteamClient.Input.RegisterForControllerInputMessages(
                 (events: any) => {
                   for (const event of events)
@@ -29,7 +39,10 @@ export function PushToTalkButton() {
                 }
               ).unregister;
           } else {
-            unregisterPtt();
+            if (unregisterPtt.current) {
+              unregisterPtt.current();
+              unregisterPtt.current = undefined;
+            }
             call("enable_ptt", false);
           }
         }}

@@ -1,6 +1,6 @@
 import { call } from "@decky/api";
 import { DialogButton, Dropdown, DropdownOption } from "@decky/ui";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 function urlContentToDataUri(url: string) {
   return fetch(url)
@@ -20,25 +20,23 @@ function urlContentToDataUri(url: string) {
 export function UploadScreenshot() {
   const [screenshot, setScreenshot] = useState<any>();
   const [selectedChannel, setChannel] = useState<any>();
+  const [channels, setChannels] = useState<DropdownOption[]>([]);
   const [uploadButtonDisabled, setUploadButtonDisabled] =
     useState<boolean>(false);
-  const channels = useMemo((): DropdownOption[] => [], []);
 
   useEffect(() => {
     call<[], Record<string, any>>("get_last_channels")
       .then(res => {
-        if ("error" in res)
+        if (!res || "error" in res)
           return;
-
-        const channelList = res;
-        console.log(channelList);
-        for (const channelId in channelList) {
-          console.log(channelId);
-          channels.push({ data: channelId, label: channelList[channelId] });
+        const nextChannels: DropdownOption[] = Object.entries(res).map(([channelId, label]) => ({
+          data: channelId,
+          label: String(label),
+        }));
+        setChannels(nextChannels);
+        if (nextChannels.length > 0) {
+          setChannel(nextChannels[0].data);
         }
-          
-
-        setChannel(channels[0].data);
       });
 
     SteamClient.Screenshots.GetLastScreenshotTaken().then((res: any) => setScreenshot(res));
@@ -70,12 +68,15 @@ export function UploadScreenshot() {
       ></Dropdown>
       <DialogButton
         style={{ marginTop: "5px" }}
-        disabled={uploadButtonDisabled}
+        disabled={uploadButtonDisabled || !selectedChannel || !screenshot?.strUrl}
         onClick={async () => {
           setUploadButtonDisabled(true);
-          const data = await urlContentToDataUri(`https://steamloopback.host/${screenshot.strUrl}`);
-          await call("post_screenshot", selectedChannel, data);
-          setUploadButtonDisabled(false);
+          try {
+            const data = await urlContentToDataUri(`https://steamloopback.host/${screenshot.strUrl}`);
+            await call("post_screenshot", selectedChannel, data);
+          } finally {
+            setUploadButtonDisabled(false);
+          }
         }}
       >
         Upload

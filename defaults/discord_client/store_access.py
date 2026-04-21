@@ -53,18 +53,21 @@ class StoreAccess:
         self.requests = {}
 
     def _set_result(self, increment, result):
-        response = self.requests[increment]
+        response = self.requests.get(increment)
+        if response is None:
+            return
         response.result = result
         response.lock.set()
 
     async def _store_access_request(self, command, id="", **kwargs):
         self.request_increment += 1
+        request_id = self.request_increment
         response = Response()
-        self.requests[self.request_increment] = response
-        await self.ws.send_json({"type": command, "id": id, "increment": self.request_increment, **kwargs})
+        self.requests[request_id] = response
+        await self.ws.send_json({"type": command, "id": id, "increment": request_id, **kwargs})
         await response.lock.wait()
         result = response.result
-        del self.requests[self.request_increment]
+        self.requests.pop(request_id, None)
         return result
 
     async def get_user(self, id):

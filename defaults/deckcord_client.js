@@ -408,6 +408,7 @@ window.Vencord.Plugins.plugins.Deckcord = {
                 FluxDispatcher.dispatch({ type: "MEDIA_ENGINE_SET_AUDIO_ENABLED", enabled: true, unmute: true });
             });
 
+            let reconnectDelayMs = 250;
             function connect() {
                 window.DECKCORD_WS = new WebSocket('ws://127.0.0.1:65123/socket');
                 window.DECKCORD_WS.addEventListener("message", async function (e) {
@@ -537,6 +538,7 @@ window.Vencord.Plugins.plugins.Deckcord = {
                 });
 
                 window.DECKCORD_WS.onopen = function (e) {
+                    reconnectDelayMs = 250;
                     navigator.mediaDevices.getUserMedia();
                     Vencord.Webpack.waitFor("useState", t =>
                         window.DECKCORD_WS.send(JSON.stringify({
@@ -547,10 +549,11 @@ window.Vencord.Plugins.plugins.Deckcord = {
                 }
 
                 window.DECKCORD_WS.onclose = function (e) {
-                    FluxDispatcher._interceptors.pop()
+                    const delay = reconnectDelayMs;
+                    reconnectDelayMs = Math.min(reconnectDelayMs * 2, 5000);
                     setTimeout(function () {
                         connect();
-                    }, 100);
+                    }, delay);
                 };
 
                 window.DECKCORD_WS.onerror = function (err) {
@@ -565,8 +568,13 @@ window.Vencord.Plugins.plugins.Deckcord = {
                     }))
                 );
 
+            }
+
+            // Add interceptor ONCE — reconnects reuse the same one.
+            // Previously re-added on every connect() causing duplicate events.
+            if (!window.__DECKCORD_INTERCEPTOR_ADDED) {
+                window.__DECKCORD_INTERCEPTOR_ADDED = true;
                 FluxDispatcher.addInterceptor(e => {
-                    // Keyboard handled by global focusin listener — no per-element patching needed
                     const shouldPass = [
                         "CONNECTION_OPEN",
                         "LOGOUT",
@@ -579,7 +587,7 @@ window.Vencord.Plugins.plugins.Deckcord = {
                         "STREAM_START",
                         "STREAM_STOP"
                     ].includes(e.type);
-                    if (shouldPass) {
+                    if (shouldPass && window.DECKCORD_WS && window.DECKCORD_WS.readyState === 1) {
                         console.log("Dispatching Deckcord event: ", e);
                         window.DECKCORD_WS.send(JSON.stringify(e));
                     }
