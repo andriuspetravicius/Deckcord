@@ -80,7 +80,10 @@ async def boot_discord(tab: Tab) -> None:
 
 async def setOSK(tab: Tab, state: bool) -> None:
     if state:
+        # Force focus onto the BrowserView before showing the OSK so typed
+        # characters route to Discord instead of the Steam library search.
         await tab.evaluate(
+            "DISCORD_TAB.m_browserView.SetFocus(true);"
             "DISCORD_TAB.m_virtualKeyboardHost.m_showKeyboard()"
         )
     else:

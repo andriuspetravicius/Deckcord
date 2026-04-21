@@ -85,10 +85,11 @@ window.Vencord.Plugins.plugins.Deckcord = {
             const tappedEditable = _findEditableParent(e.target);
             if (tappedEditable) {
                 _activeEditableElement = tappedEditable;
-                // Re-open keyboard if tapping already-focused input
-                if (document.activeElement === tappedEditable) {
-                    fetch("http://127.0.0.1:65123/openkb", { mode: "no-cors" });
-                }
+                // Always request the backend to open the OSK so it binds to
+                // the Discord BrowserView (backend also re-asserts focus);
+                // otherwise Steam may open its own OSK bound to the library
+                // search and keystrokes route there instead of Discord.
+                fetch("http://127.0.0.1:65123/openkb", { mode: "no-cors" });
             } else {
                 // Tapped non-editable area — clear active element
                 _activeEditableElement = null;
@@ -100,9 +101,7 @@ window.Vencord.Plugins.plugins.Deckcord = {
             const tappedEditable = _findEditableParent(target);
             if (tappedEditable) {
                 _activeEditableElement = tappedEditable;
-                if (document.activeElement === tappedEditable) {
-                    fetch("http://127.0.0.1:65123/openkb", { mode: "no-cors" });
-                }
+                fetch("http://127.0.0.1:65123/openkb", { mode: "no-cors" });
             } else {
                 _activeEditableElement = null;
             }
