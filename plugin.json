@@ -6,6 +6,6 @@
   "publish": {
     "tags": ["discord", "chat"],
     "description": "Easy access to Discord",
-    "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/PluginLoader"
+    "image": "https://raw.githubusercontent.com/andriuspetravicius/Deckcord/main/assets/cover.png"
   }
 }

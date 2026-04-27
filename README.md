@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/cover.jpg" alt="Deckcord" />
+</p>
+
 # Deckcord
 ## Discord on the Deck, made easy
 
