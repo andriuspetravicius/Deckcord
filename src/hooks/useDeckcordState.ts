@@ -5,7 +5,9 @@ export function useDeckcordState() {
   const [state, setState] = useState<any | undefined>();
 
   useEffect(() => {
-    call("get_state").then((s) => setState(s));
+    call("get_state")
+      .then((s) => setState(s))
+      .catch((e) => console.error("Deckcord: Failed to get state:", e));
 
     const listener = addEventListener("state", (data: any) => {
       setState(data);
@@ -35,7 +37,7 @@ export const isLoaded = () =>
         removeEventListener("state", listener);
         resolve(true);
       }
-    });
+    }).catch((e) => console.error("Deckcord: Failed waiting for loaded state:", e));
   });
 
 export const isLoggedIn = () =>
@@ -54,5 +56,5 @@ export const isLoggedIn = () =>
         removeEventListener("state", listener);
         resolve(true);
       }
-    });
+    }).catch((e) => console.error("Deckcord: Failed waiting for login state:", e));
   });

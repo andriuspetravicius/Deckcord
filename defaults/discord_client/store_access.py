@@ -1,4 +1,4 @@
-from asyncio import Event
+from asyncio import Event, wait_for, TimeoutError
 
 class User:
     def __init__(self, data) -> None:
@@ -51,6 +51,7 @@ class StoreAccess:
     def __init__(self) -> None:
         self.request_increment = 0
         self.requests = {}
+        self.ws = None
 
     def _set_result(self, increment, result):
         response = self.requests.get(increment)
@@ -60,15 +61,21 @@ class StoreAccess:
         response.lock.set()
 
     async def _store_access_request(self, command, id="", **kwargs):
+        if self.ws is None or self.ws.closed:
+            return None
+
         self.request_increment += 1
         request_id = self.request_increment
         response = Response()
         self.requests[request_id] = response
-        await self.ws.send_json({"type": command, "id": id, "increment": request_id, **kwargs})
-        await response.lock.wait()
-        result = response.result
-        self.requests.pop(request_id, None)
-        return result
+        try:
+            await self.ws.send_json({"type": command, "id": id, "increment": request_id, **kwargs})
+            await wait_for(response.lock.wait(), timeout=5)
+            return response.result
+        except (Exception, TimeoutError):
+            return None
+        finally:
+            self.requests.pop(request_id, None)
 
     async def get_user(self, id):
         return await self._store_access_request("$getuser", id)

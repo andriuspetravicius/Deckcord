@@ -164,8 +164,29 @@ class Plugin:
             logger.error(f"Failed to initialize Discord tab: {e}")
 
     @classmethod
-    async def _openkb(cls, request):
+    async def _ensure_shared_js_tab(cls, force_refresh=False):
+        if force_refresh or not hasattr(cls, "shared_js_tab"):
+            cls.shared_js_tab = await get_tab("SharedJSContext")
         await cls.shared_js_tab.ensure_open()
+
+    @classmethod
+    async def _evaluate_shared_js(cls, js: str) -> bool:
+        last_error = None
+        for attempt in range(2):
+            try:
+                await cls._ensure_shared_js_tab(force_refresh=attempt > 0)
+                await cls.shared_js_tab.evaluate(js)
+                return True
+            except Exception as e:
+                last_error = e
+                logger.warning(f"SharedJSContext evaluation failed: {e}")
+
+        logger.error(f"SharedJSContext evaluation failed after reconnect: {last_error}")
+        return False
+
+    @classmethod
+    async def _openkb(cls, request):
+        await cls._ensure_shared_js_tab()
         await setOSK(cls.shared_js_tab, True)
         logger.info("Setting discord visibility to true")
         return Response(text="OK")
@@ -185,15 +206,13 @@ class Plugin:
             payload = dumps(
                 {"title": notification["title"], "body": notification["body"]}
             )
-            await cls.shared_js_tab.ensure_open()
-            await cls.shared_js_tab.evaluate(
+            await cls._evaluate_shared_js(
                 f"window.DECKCORD.dispatchNotification({payload});"
             )
 
     @classmethod
     async def connect_ws(cls):
-        await cls.shared_js_tab.ensure_open()
-        await cls.shared_js_tab.evaluate(f"window.DECKCORD.connectWs()")
+        await cls._evaluate_shared_js("window.DECKCORD.connectWs()")
 
     @classmethod
     async def get_state(cls):
@@ -216,20 +235,20 @@ class Plugin:
 
     @classmethod
     async def set_ptt(cls, value):
-        await cls.evt_handler.ws.send_json({"type": "$ptt", "value": value})
+        await cls.evt_handler.send_json({"type": "$ptt", "value": value})
 
     @classmethod
     async def enable_ptt(cls, enabled):
-        await cls.evt_handler.ws.send_json({"type": "$setptt", "enabled": enabled})
+        await cls.evt_handler.send_json({"type": "$setptt", "enabled": enabled})
 
     @classmethod
     async def set_rpc(cls, game):
         logger.info("Setting RPC")
-        await cls.evt_handler.ws.send_json({"type": "$rpc", "game": game})
+        await cls.evt_handler.send_json({"type": "$rpc", "game": game})
 
     @classmethod
     async def get_last_channels(cls):
-        return await cls.evt_handler.api.get_last_channels()
+        return await cls.evt_handler.api.get_last_channels() or []
 
     @classmethod
     async def post_screenshot(cls, channel_id, data):
@@ -240,32 +259,32 @@ class Plugin:
             return True
 
         payload = dumps({"title": "Deckcord", "body": "Error while posting screenshot"})
-        await cls.shared_js_tab.ensure_open()
-        await cls.shared_js_tab.evaluate(
+        await cls._evaluate_shared_js(
             f"window.DECKCORD.dispatchNotification({payload});"
         )
 
     @classmethod
     async def get_screen_bounds(cls):
-        return await cls.evt_handler.api.get_screen_bounds()
+        return await cls.evt_handler.api.get_screen_bounds() or {"width": 1280, "height": 800}
 
     @classmethod
     async def go_live(cls):
-        await cls.evt_handler.ws.send_json({"type": "$golive", "stop": False})
+        await cls.evt_handler.send_json({"type": "$golive", "stop": False})
 
     @classmethod
     async def stop_go_live(cls):
-        await cls.evt_handler.ws.send_json({"type": "$golive", "stop": True})
+        await cls.evt_handler.send_json({"type": "$golive", "stop": True})
 
     @classmethod
     async def mic_webrtc_answer(cls, answer):
-        await cls.evt_handler.ws.send_json({"type": "$webrtc", "payload": answer})
+        await cls.evt_handler.send_json({"type": "$webrtc", "payload": answer})
 
     @classmethod
     async def _unload(cls):
         if hasattr(cls, "webrtc_server"):
-            cls.webrtc_server.kill()
-            await cls.webrtc_server.wait()
+            if cls.webrtc_server.returncode is None:
+                cls.webrtc_server.kill()
+                await cls.webrtc_server.wait()
 
         if hasattr(cls, "runner"):
             await cls.runner.shutdown()

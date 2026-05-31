@@ -13,7 +13,7 @@ from decky import logger # type: ignore
 
 class EventHandler:
     def __init__(self) -> None:
-        self.ws: WebSocketResponse
+        self.ws: WebSocketResponse | None = None
         self.api = StoreAccess()
         self.state_changed_event = Event()
         self.notification_queue = Queue()
@@ -44,14 +44,25 @@ class EventHandler:
         self.vc_guild_name = ""
 
         self.webrtc = None
-    
+
+    async def send_json(self, data) -> bool:
+        if self.ws is None or self.ws.closed:
+            logger.warning("Discord client websocket is not connected")
+            return False
+        try:
+            await self.ws.send_json(data)
+            return True
+        except Exception as e:
+            logger.warning(f"Discord client websocket write failed: {e}")
+            return False
+
     async def yield_new_state(self):
         while True:
             await self.state_changed_event.wait()
             dc = self.build_state_dict()
             yield dc
             self.state_changed_event.clear()
-    
+
     async def yield_notification(self):
         while True:
             yield await self.notification_queue.get()
@@ -72,29 +83,33 @@ class EventHandler:
             if self.vc_channel_id in self.voicestates:
                 for user in self.voicestates[self.vc_channel_id].values():
                     r["vc"]["users"].append(user.to_dict())
-        
+
         if self.webrtc:
             self.webrtc = None
         return r
 
     async def toggle_mute(self, *args, act=False):
         if act:
-            await self.ws.send_json({"type": 'AUDIO_TOGGLE_SELF_MUTE', "context": 'default', "syncRemote": True})
+            await self.send_json({"type": 'AUDIO_TOGGLE_SELF_MUTE', "context": 'default', "syncRemote": True})
         r = await self.api.get_media()
+        if not r:
+            return
         self.me.is_muted = r["mute"]
         self.me.is_deafened = r["deaf"]
         self.me.is_live = r["live"]
-    
+
     async def toggle_deafen(self, *args, act=False):
         if act:
-            await self.ws.send_json({"type": 'AUDIO_TOGGLE_SELF_DEAF', "context": 'default', "syncRemote": True})
+            await self.send_json({"type": 'AUDIO_TOGGLE_SELF_DEAF', "context": 'default', "syncRemote": True})
         r = await self.api.get_media()
+        if not r:
+            return
         self.me.is_muted = r["mute"]
         self.me.is_deafened = r["deaf"]
         self.me.is_live = r["live"]
-    
+
     async def disconnect_vc(self):
-        await self.ws.send_json({"type":"VOICE_CHANNEL_SELECT","guildId":None,"channelId":None,"currentVoiceChannelId":self.vc_channel_id,"video":False,"stream":False})
+        await self.send_json({"type":"VOICE_CHANNEL_SELECT","guildId":None,"channelId":None,"currentVoiceChannelId":self.vc_channel_id,"video":False,"stream":False})
 
     async def main(self, ws):
         logger.info("Received WS Connection. Starting event processing loop")
@@ -132,12 +147,12 @@ class EventHandler:
     async def _logged_in(self, data):
         self.logged_in = True
         self.me = User(data["user"])
-        
+
         s = await self.api.get_media()
         self.me.is_muted = s["mute"]
         self.me.is_deafened = s["deaf"]
         self.me.is_live = s["live"]
-    
+
     async def _logout(self, data):
         self.logged_in = False
 
@@ -146,14 +161,14 @@ class EventHandler:
         if not self.vc_channel_id:
             self.vc_channel_name = ""
             self.vc_guild_name = ""
-            return 
+            return
         self.vc_channel_name = (await self.api.get_channel(self.vc_channel_id))["name"]
         if "guildId" in data and data["guildId"]:
             self.vc_guild_name = (await self.api.get_guild(data["guildId"]))["name"]
         if self.vc_channel_id in self.voicestates:
             for user in self.voicestates[self.vc_channel_id].values():
                 await user.populate(self.api)
-    
+
     async def _voice_state_update(self, data):
         states = data["voiceStates"]
         for state in states:
@@ -171,7 +186,7 @@ class EventHandler:
                 self.voicestates[state["channelId"]][state["userId"]] = user_to_add
             else:
                 self.voicestates[state["channelId"]] = {state["userId"]: user_to_add}
-    
+
     async def _notification_create(self, data):
         await self.notification_queue.put(data)
 
@@ -208,7 +223,7 @@ class EventHandler:
 
         if path and not _is_path_allowed(path):
             logger.warning(f"File picker: blocked access to {path}")
-            await self.ws.send_json({
+            await self.send_json({
                 "type": "$file_picker_list",
                 "entries": [],
                 "path": path,
@@ -239,7 +254,7 @@ class EventHandler:
 
             entries.append({"name": "\U0001f3e0 Home", "path": home, "type": "directory"})
 
-            await self.ws.send_json({
+            await self.send_json({
                 "type": "$file_picker_list",
                 "entries": entries,
                 "path": "",
@@ -249,7 +264,7 @@ class EventHandler:
             return
 
         if not os.path.isdir(path):
-            await self.ws.send_json({
+            await self.send_json({
                 "type": "$file_picker_list",
                 "entries": [],
                 "path": path,
@@ -281,7 +296,7 @@ class EventHandler:
 
         entries.sort(key=lambda e: (0 if e["type"] == "directory" else 1, e["name"].lower()))
 
-        await self.ws.send_json({
+        await self.send_json({
             "type": "$file_picker_list",
             "entries": entries,
             "path": path,
@@ -294,7 +309,7 @@ class EventHandler:
         filepath: str = data.get("path", "")
         if not filepath or not os.path.isfile(filepath):
             logger.error(f"File not found: {filepath}")
-            await self.ws.send_json({"type": "$file_picker_result", "files": []})
+            await self.send_json({"type": "$file_picker_result", "files": []})
             return
 
         # Security: validate path is within allowed directories
@@ -315,7 +330,7 @@ class EventHandler:
                 continue
         if not allowed:
             logger.warning(f"File picker select: blocked access to {filepath}")
-            await self.ws.send_json({"type": "$file_picker_result", "files": []})
+            await self.send_json({"type": "$file_picker_result", "files": []})
             return
 
         # Safety: reject files larger than 50MB to prevent OOM
@@ -323,7 +338,7 @@ class EventHandler:
         file_size = os.path.getsize(filepath)
         if file_size > max_size:
             logger.warning(f"File too large: {filepath} ({file_size} bytes)")
-            await self.ws.send_json({"type": "$file_picker_result", "files": []})
+            await self.send_json({"type": "$file_picker_result", "files": []})
             return
 
         try:
@@ -334,7 +349,7 @@ class EventHandler:
                 file_data = base64.b64encode(f.read()).decode("ascii")
 
             logger.info(f"Sending file: {filename} ({mime_type}, {len(file_data)} bytes b64)")
-            await self.ws.send_json({
+            await self.send_json({
                 "type": "$file_picker_result",
                 "files": [{
                     "name": filename,
@@ -344,4 +359,4 @@ class EventHandler:
             })
         except Exception as e:
             logger.error(f"File picker select error: {e}")
-            await self.ws.send_json({"type": "$file_picker_result", "files": []})
+            await self.send_json({"type": "$file_picker_result", "files": []})

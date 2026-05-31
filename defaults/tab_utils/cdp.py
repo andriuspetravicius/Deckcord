@@ -4,7 +4,7 @@ from asyncio import sleep, run
 from typing import List
 
 from aiohttp import ClientSession # type: ignore
-from aiohttp.client_exceptions import ClientConnectorError, ClientOSError # type: ignore
+from aiohttp.client_exceptions import ClientConnectionResetError, ClientConnectorError, ClientOSError # type: ignore
 from asyncio.exceptions import TimeoutError
 
 BASE_ADDRESS = "http://127.0.0.1:8080"
@@ -19,18 +19,24 @@ class Tab:
 
         self.websocket = None
         self.client = None
-    
+
     async def ensure_open(self):
         if not self.websocket or self.websocket.closed:
             await self.open_websocket()
 
     async def open_websocket(self):
+        if self.websocket and not self.websocket.closed:
+            return
+        if self.client and not self.client.closed:
+            await self.client.close()
         self.client = ClientSession()
         self.websocket = await self.client.ws_connect(self.ws_url)
 
     async def close_websocket(self):
-        await self.websocket.close()
-        await self.client.close()
+        if self.websocket and not self.websocket.closed:
+            await self.websocket.close()
+        if self.client and not self.client.closed:
+            await self.client.close()
 
     async def listen_for_message(self):
         async for message in self.websocket:
@@ -40,10 +46,14 @@ class Tab:
         await self.close_websocket()
 
     async def _send_devtools_cmd(self, dc, receive=True):
-        if self.websocket:
+        if self.websocket and not self.websocket.closed:
             self.cmd_id += 1
             dc["id"] = self.cmd_id
-            await self.websocket.send_json(dc)
+            try:
+                await self.websocket.send_json(dc)
+            except (ClientConnectionResetError, ClientOSError, RuntimeError):
+                await self.close_websocket()
+                raise
 
             if receive:
                 async for msg in self.listen_for_message():

@@ -116,6 +116,24 @@ function createDiscordBrowserView(): boolean {
   }
 }
 
+async function initializeDiscordBrowserView() {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const browserViewCreated = createDiscordBrowserView();
+    if (browserViewCreated) {
+      // Tell the backend the tab is ready to be found via CDP.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      call("initialize_discord_tab").catch((e) => {
+        console.error("Deckcord: Failed to initialize Discord tab:", e);
+      });
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  console.error("Deckcord: FATAL — Could not create Discord BrowserView");
+}
+
 const Content = () => {
   const state = useDeckcordState();
   if (!state?.loaded) {
@@ -217,17 +235,8 @@ export default definePlugin(() => {
     MIC_PEER_CONNECTION: undefined,
   };
 
-  // Create the BrowserView from the frontend where Router is available
-  const browserViewCreated = createDiscordBrowserView();
-  if (!browserViewCreated) {
-    console.error("Deckcord: FATAL — Could not create Discord BrowserView");
-  } else {
-    // Tell the backend the tab is ready to be found via CDP
-    // Small delay to let the sentinel URL load
-    setTimeout(() => {
-      call("initialize_discord_tab");
-    }, 1500);
-  }
+  // Create the BrowserView from the frontend where Router is available.
+  initializeDiscordBrowserView();
 
   let peerConnection: RTCPeerConnection;
   const webrtcEventListener = async (data: any) => {
@@ -292,6 +301,7 @@ export default definePlugin(() => {
         if (settings.bDisplayIsExternal != lastDisplayIsExternal) {
           lastDisplayIsExternal = settings.bDisplayIsExternal;
           const bounds: any = await call("get_screen_bounds");
+          if (!window.DISCORD_TAB) return;
           window.DISCORD_TAB.HEIGHT = bounds.height;
           window.DISCORD_TAB.WIDTH = bounds.width;
           window.DISCORD_TAB.m_browserView.SetBounds(
@@ -304,7 +314,11 @@ export default definePlugin(() => {
       }
     );
     await isLoggedIn();
-    setPlaying();
+    try {
+      setPlaying();
+    } catch (e) {
+      console.error("Deckcord: Failed to update RPC:", e);
+    }
   })();
 
   routerHook.addRoute("/discord", () => {

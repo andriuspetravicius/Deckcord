@@ -20,3 +20,5 @@
 - Never embed raw JSON/user-controlled text in quoted JS snippets for `Runtime.evaluate`; pass JSON objects directly.
 - For filesystem authorization, never use `startswith` path checks; use `os.path.commonpath` with real paths.
 - Any listener/callback added to global or host-managed callback arrays must have explicit unload cleanup.
+- Decky plugin calls must tolerate stale Discord client and Steam CEF/CDP sockets; Steam UI reloads can close transports while the plugin process stays marked loaded.
+- Steam menu fallbacks must never throw from observers or intervals; guard DOM injection, detect existing React menu items first, and only insert relative to a node's direct parent.
